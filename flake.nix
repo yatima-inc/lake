@@ -47,6 +47,7 @@
         buildInputs = with pkgs; [
           leanPkgs.lean
         ];
+        LEAN_PATH = "${leanPkgs.Lean.modRoot}:${project.modRoot}";
       };
     });
 }
