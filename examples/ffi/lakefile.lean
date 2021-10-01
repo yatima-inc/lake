@@ -1,7 +1,5 @@
-import Lake.Package
-import Lake.BuildTargets
-
-open Lake System
+import Lake
+open System Lake DSL
 
 def cDir : FilePath := "c"
 def addSrc := cDir / "add.cpp"
@@ -16,9 +14,8 @@ def addOTarget (pkgDir : FilePath) : FileTarget :=
 def cLibTarget (pkgDir : FilePath) : FileTarget :=
   staticLibTarget (pkgDir / cLib) #[addOTarget pkgDir]
 
-def package : Packager := fun pkgDir args => {
+package (pkgDir) (args) {
   name := "ffi"
-  version := "0.1"
   -- customize layout
   srcDir := "lib"
   libRoots := #[`Add]

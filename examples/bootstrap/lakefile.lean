@@ -1,16 +1,13 @@
-import Lake.Package
+import Lake
+open System Lake DSL
 
-open Lake System
-
-def package : PackageConfig := {
+package where
   name := "lake"
-  version := "bootstrap"
   srcDir := FilePath.mk ".." / ".."
   oleanDir := "."
-  leancArgs := #["-O3", "-DNDEBUG"]
+  binRoot := `Lake.Main
   linkArgs :=
     if Platform.isWindows then
       #["-Wl,--export-all"]
     else
       #["-rdynamic"]
-}

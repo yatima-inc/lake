@@ -1,15 +1,11 @@
-import Lake.Package
-import Lake.BuildTargets
+import Lake
+open System Lake DSL
 
-open Lake System
-
-def package : PackageConfig := {
+package where
   name := "ffi-dep"
-  version := "0.1"
   binRoot := `Main
   binName := "add"
   dependencies := [{
     name := "ffi"
     src := Source.path (FilePath.mk ".." / "ffi")
   }]
-}
