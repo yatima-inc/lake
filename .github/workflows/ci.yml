@@ -1,10 +1,6 @@
 name: CI
 
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+on: [ push, pull_request ]
 
 jobs:
   build:
@@ -58,7 +54,7 @@ jobs:
       continue-on-error: true
       uses: actions/upload-artifact@v2
       with:
-        name: Build
+        name: ${{ matrix.os }}
         path: build
     - name: Check Lake
       run: make -C examples check-lake

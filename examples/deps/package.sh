@@ -1,3 +1,10 @@
+set -ex
+
+cd bar
+${LAKE:-../../../build/bin/lake} build
+cd ..
+
+
 cd foo
-echo "in directory 'foo'"
-${LAKE:-../../../build/bin/lake} build-bin
+${LAKE:-../../../build/bin/lake} build
+cd ..
