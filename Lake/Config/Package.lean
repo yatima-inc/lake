@@ -6,7 +6,6 @@ Authors: Gabriel Ebner, Sebastian Ullrich, Mac Malone
 import Lean.Data.Name
 import Lean.Elab.Import
 import Std.Data.HashMap
-import Lake.LeanVersion
 import Lake.Build.TargetTypes
 import Lake.Config.Glob
 import Lake.Config.Opaque
@@ -290,8 +289,7 @@ namespace OpaquePackage
 unsafe def unsafeMk (pkg : Package) : OpaquePackage :=
   unsafeCast pkg
 
-@[implementedBy unsafeMk] constant mk (pkg : Package) : OpaquePackage :=
-  OpaquePackagePointed.val
+@[implementedBy unsafeMk] constant mk (pkg : Package) : OpaquePackage
 
 instance : Coe Package OpaquePackage := ⟨mk⟩
 instance : Inhabited OpaquePackage := ⟨mk Inhabited.default⟩
@@ -369,6 +367,10 @@ def moreLeanArgs (self : Package) : Array String :=
 def modToOlean (mod : Name) (self : Package) : FilePath :=
   Lean.modToFilePath self.oleanDir mod "olean"
 
+/-- The path to a module's `.ilean` file within the package. -/
+def modToIlean (mod : Name) (self : Package) : FilePath :=
+  Lean.modToFilePath self.oleanDir mod "ilean"
+
 /-- The path to module's `.trace` file within the package. -/
 def modToTraceFile (mod : Name) (self : Package) : FilePath :=
   Lean.modToFilePath self.oleanDir mod "trace"
@@ -383,7 +385,8 @@ def libGlobs (self : Package) : Array Glob :=
 
 /-- Whether the given module is considered local to the package. -/
 def isLocalModule (mod : Name) (self : Package) : Bool :=
-  self.libRoots.any fun root => root.isPrefixOf mod
+  self.libRoots.any (fun root => root.isPrefixOf mod) ||
+  self.libGlobs.any (fun glob => glob.matches mod)
 
 /-- Get an `Array` of the package's module. -/
 def getModuleArray (self : Package) : IO (Array Name) := do

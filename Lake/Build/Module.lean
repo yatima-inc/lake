@@ -16,6 +16,32 @@ open Lean hiding SearchPath
 
 namespace Lake
 
+-- # Info
+
+structure Module where
+  pkg : Package
+  name : Name
+  deriving Inhabited
+
+namespace Module
+
+@[inline] def srcFile (self : Module) : FilePath :=
+  self.pkg.modToSrc self.name
+
+@[inline] def oleanFile (self : Module) : FilePath :=
+  self.pkg.modToOlean self.name
+
+@[inline] def ileanFile (self : Module) : FilePath :=
+  self.pkg.modToIlean self.name
+
+@[inline] def cFile (self : Module) : FilePath :=
+  self.pkg.modToC self.name
+
+@[inline] def traceFile (self : Module) : FilePath :=
+  self.pkg.modToTraceFile self.name
+
+end Module
+
 -- # Targets
 
 structure OleanAndC where
@@ -33,7 +59,7 @@ instance : GetMTime OleanAndC := ⟨OleanAndC.getMTime⟩
 protected def computeHash (self : OleanAndC) : IO Hash := do
   return mixTrace (← computeHash self.oleanFile) (← computeHash self.cFile)
 
-instance : ComputeHash OleanAndC := ⟨OleanAndC.computeHash⟩
+instance : ComputeHash OleanAndC IO := ⟨OleanAndC.computeHash⟩
 
 protected def checkExists (self : OleanAndC) : BaseIO Bool := do
   return (← checkExists self.oleanFile) && (← checkExists self.cFile)
@@ -48,11 +74,11 @@ namespace OleanAndCTarget
 
 abbrev oleanFile (self : OleanAndCTarget) := self.info.oleanFile
 def oleanTarget (self : OleanAndCTarget) : FileTarget :=
-  Target.mk self.oleanFile do self.mapAsync fun i _ => computeTrace i.oleanFile
+  Target.mk self.oleanFile do self.bindSync fun i _ => computeTrace i.oleanFile
 
 abbrev cFile (self : OleanAndCTarget) := self.info.cFile
 def cTarget (self : OleanAndCTarget) : FileTarget :=
-  Target.mk self.cFile do self.mapAsync fun i _ => computeTrace i.cFile
+  Target.mk self.cFile do self.bindSync fun i _ => computeTrace i.cFile
 
 end OleanAndCTarget
 
@@ -82,11 +108,11 @@ abbrev cTarget (self : ActiveOleanAndCTarget) := self.info.cTarget
 
 end ActiveOleanAndCTarget
 
-def OleanAndCTarget.run' (self : OleanAndCTarget) : BuildM ActiveOleanAndCTarget := do
-  let t ← self.run
-  let oleanTask ← t.mapAsync fun info depTrace => do
+def OleanAndCTarget.activate (self : OleanAndCTarget) : SchedulerM ActiveOleanAndCTarget := do
+  let t ← BuildTarget.activate self
+  let oleanTask ← t.bindSync fun info depTrace => do
     return mixTrace (← computeTrace info.oleanFile) depTrace
-  let cTask ← t.mapAsync fun info _ => do
+  let cTask ← t.bindSync fun info _ => do
     return mixTrace (← computeTrace info.cFile) (← getLeanTrace)
   return t.withInfo {
     oleanTarget := ActiveTarget.mk self.oleanFile oleanTask
@@ -95,32 +121,35 @@ def OleanAndCTarget.run' (self : OleanAndCTarget) : BuildM ActiveOleanAndCTarget
 
 -- # Module Builders
 
-def moduleTarget [CheckExists i] [GetMTime i] [ComputeHash i] (info : i)
+def moduleTarget
+[CheckExists i] [GetMTime i] [ComputeHash i m] [MonadLiftT m BuildM] (info : i)
 (leanFile traceFile : FilePath) (contents : String) (depTarget : BuildTarget x)
 (build : BuildM PUnit) : BuildTarget i :=
-  Target.mk info <| depTarget.mapOpaqueAsync fun depTrace => do
+  Target.mk info <| depTarget.bindOpaqueSync fun depTrace => do
     let srcTrace : BuildTrace := ⟨Hash.ofString contents, ← getMTime leanFile⟩
     let fullTrace := (← getLeanTrace).mix <| srcTrace.mix depTrace
     let upToDate ← fullTrace.checkAgainstFile info traceFile
     unless upToDate do
       build
     fullTrace.writeToFile traceFile
-    depTrace
+    return depTrace
 
 def moduleOleanAndCTarget
 (leanFile cFile oleanFile traceFile : FilePath)
 (contents : String)  (depTarget : BuildTarget x)
 (rootDir : FilePath := ".") (leanArgs : Array String := #[]) : OleanAndCTarget :=
+  let ileanFile := oleanFile.withExtension "ilean"
   moduleTarget (OleanAndC.mk oleanFile cFile) leanFile traceFile contents depTarget do
-    compileOleanAndC leanFile oleanFile cFile (← getOleanPath) rootDir leanArgs (← getLean)
+    compileLeanModule leanFile oleanFile ileanFile cFile (← getOleanPath) rootDir leanArgs (← getLean)
 
 def moduleOleanTarget
 (leanFile oleanFile traceFile : FilePath)
 (contents : String) (depTarget : BuildTarget x)
 (rootDir : FilePath := ".") (leanArgs : Array String := #[]) : FileTarget :=
+  let ileanFile := oleanFile.withExtension "ilean"
   let target := moduleTarget oleanFile leanFile traceFile contents depTarget do
-    compileOlean leanFile oleanFile (← getOleanPath) rootDir leanArgs (← getLean)
-  target.withTask do target.mapAsync fun oleanFile depTrace => do
+    compileLeanModule leanFile oleanFile ileanFile none (← getOleanPath) rootDir leanArgs (← getLean)
+  target.withTask do target.bindSync fun oleanFile depTrace => do
     return mixTrace (← computeTrace oleanFile) depTrace
 
 protected def Package.moduleOleanAndCTargetOnly (self : Package)
@@ -147,37 +176,35 @@ builds the target module after recursively building its local imports
 -/
 def recBuildModuleWithLocalImports
 [Monad m] [MonadLiftT BuildM m] [MonadFunctorT BuildM m]
-(build : Name → FilePath → String → List α → BuildM α)
-: RecBuild Name α m := fun mod recurse => do
+(build : Package → Name → FilePath → String → List α → BuildM α)
+: RecBuild Module α m := fun info recurse => do
   have : MonadLift BuildM m := ⟨liftM⟩
   have : MonadFunctor BuildM m := ⟨fun f => monadMap (m := BuildM) f⟩
-  let pkg ← getPackage
-  let leanFile := pkg.modToSrc mod
-  let contents ← IO.FS.readFile leanFile
-  let (imports, _, _) ← Elab.parseImports contents leanFile.toString
+  let contents ← IO.FS.readFile info.srcFile
+  let (imports, _, _) ← Elab.parseImports contents info.srcFile.toString
   -- we construct the import targets even if a rebuild is not required
   -- because other build processes (ex. `.o`) rely on the map being complete
   let importTargets ← imports.filterMapM fun imp => OptionT.run do
     let mod := imp.module
     let pkg ← OptionT.mk <| getPackageForModule? mod
-    adaptPackage pkg <| recurse mod
-  build mod leanFile contents importTargets
+    recurse ⟨pkg, mod⟩
+  build info.pkg info.name info.srcFile contents importTargets
 
 def recBuildModuleOleanAndCTargetWithLocalImports
 [Monad m] [MonadLiftT BuildM m] [MonadFunctorT BuildM m] (depTarget : ActiveBuildTarget x)
-: RecBuild Name ActiveOleanAndCTarget m :=
-  recBuildModuleWithLocalImports fun mod leanFile contents importTargets => do
+: RecBuild Module ActiveOleanAndCTarget m :=
+  recBuildModuleWithLocalImports fun pkg mod leanFile contents importTargets => do
     let importTarget ← ActiveTarget.collectOpaqueList <| importTargets.map (·.oleanTarget)
     let allDepsTarget := Target.active <| ← depTarget.mixOpaqueAsync importTarget
-    (← getPackage).moduleOleanAndCTargetOnly mod leanFile contents allDepsTarget |>.run'
+    pkg.moduleOleanAndCTargetOnly mod leanFile contents allDepsTarget |>.activate
 
 def recBuildModuleOleanTargetWithLocalImports
 [Monad m] [MonadLiftT BuildM m] [MonadFunctorT BuildM m] (depTarget : ActiveBuildTarget x)
-: RecBuild Name ActiveFileTarget m :=
-  recBuildModuleWithLocalImports fun mod leanFile contents importTargets => do
+: RecBuild Module ActiveFileTarget m :=
+  recBuildModuleWithLocalImports fun pkg mod leanFile contents importTargets => do
     let importTarget ← ActiveTarget.collectOpaqueList importTargets
     let allDepsTarget := Target.active <| ← depTarget.mixOpaqueAsync importTarget
-    (← getPackage).moduleOleanTargetOnly mod leanFile contents allDepsTarget |>.run
+    pkg.moduleOleanTargetOnly mod leanFile contents allDepsTarget |>.activate
 
 -- ## Definitions
 
@@ -187,19 +214,36 @@ abbrev ModuleBuildM (α) :=
   EStateT (List Name) (NameMap α) BuildM
 
 abbrev RecModuleBuild (o) :=
-  RecBuild Name o (ModuleBuildM o)
+  RecBuild Module o (ModuleBuildM o)
 
 abbrev RecModuleTargetBuild (i) :=
   RecModuleBuild (ActiveBuildTarget i)
 
 -- ## Builders
 
-def buildModule (mod : Name)
+/-- Build a single module using the recursive module build function `build`. -/
+def buildModule (mod : Module)
 [Inhabited o] (build : RecModuleBuild o) : BuildM o := do
   failOnBuildCycle <| ← RBTopT.run' do
-    buildRBTop (cmp := Name.quickCmp) build id mod
+    buildRBTop (cmp := Name.quickCmp) build Module.name mod
 
-def buildModules (mods : Array Name)
+/--
+Build each module using the recursive module function `build`,
+constructing an `Array`  of the results.
+-/
+def buildModuleArray (mods : Array Module)
 [Inhabited o] (build : RecModuleBuild o) : BuildM (Array o) := do
-  failOnBuildCycle <| ← RBTopT.run' <| mods.mapM do
-    buildRBTop (cmp := Name.quickCmp) build id
+  failOnBuildCycle <| ← RBTopT.run' <| mods.mapM <|
+    buildRBTop (cmp := Name.quickCmp) build Module.name
+
+/--
+Build each module using the recursive module function `build`,
+constructing a module-target `NameMap`  of the results.
+-/
+def buildModuleMap [Inhabited o]
+(infos : Array Module) (build : RecModuleBuild o)
+: BuildM (NameMap o) := do
+  let (x, objMap) ← RBTopT.run do
+    infos.forM fun info => discard <| buildRBTop build Module.name info
+  failOnBuildCycle x
+  return objMap

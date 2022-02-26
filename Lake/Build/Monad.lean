@@ -3,59 +3,34 @@ Copyright (c) 2021 Mac Malone. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Mac Malone
 -/
-import Lake.Config.Package
-import Lake.Config.Workspace
-import Lake.Build.MonadBasic
+import Lake.Config.Monad
+import Lake.Build.Context
 
 open System
 open Lean (Name)
 
 namespace Lake
 
-def mkBuildContext (ws : Workspace) (pkg : Package) (leanInstall : LeanInstall) (lakeInstall : LakeInstall) : IO BuildContext := do
-  let leanTrace := mixTrace (← computeTrace leanInstall.lean) (← computeTrace leanInstall.sharedLib)
-  return {package := pkg, workspace := ws, leanInstall, lakeInstall, leanTrace}
-
 deriving instance Inhabited for BuildContext
 
-def adaptPackage [MonadWithReaderOf BuildContext m] (pkg : Package) (act : m α) : m α :=
-  withReader (fun ctx => {ctx with package := pkg}) act
+def mkBuildContext (ws : Workspace) (lean : LeanInstall) (lake : LakeInstall) : IO BuildContext := do
+  let leanTrace :=
+    if lean.githash.isEmpty then
+      mixTrace (← computeTrace lean.lean) (← computeTrace lean.sharedLib)
+    else
+      Hash.ofString lean.githash
+  return {opaqueWs := ws, lean, lake, leanTrace}
 
-def getPackage : BuildM Package :=
-  (·.package.get) <$> read
+instance [Monad m] : MonadLake (BuildT m) where
+  getLeanInstall := (·.lean) <$> read
+  getLakeInstall := (·.lake) <$> read
+  getWorkspace := (·.workspace) <$> read
 
-def getWorkspace : BuildM Workspace :=
-  (·.workspace.get) <$> read
-
-def getPackageByName? (name : Name) : BuildM (Option Package) :=
-  (·.packageByName? name) <$> getWorkspace
-
-def getPackageForModule? (mod : Name) : BuildM (Option Package) :=
-  (·.packageForModule? mod) <$> getWorkspace
-
-def getBuildDir : BuildM FilePath :=
-  (·.buildDir) <$> getPackage
-
-def getOleanPath : BuildM SearchPath :=
-  (·.oleanPath) <$> getWorkspace
-
-def getLeanInstall : BuildM LeanInstall :=
-  (·.leanInstall) <$> read
-
-def getLeanIncludeDir : BuildM FilePath :=
-  (·.includeDir) <$> getLeanInstall
-
-def getLean : BuildM FilePath :=
-  (·.lean) <$> getLeanInstall
-
-def getLeanTrace : BuildM BuildTrace := do
+@[inline] def getLeanTrace : BuildM BuildTrace :=
   (·.leanTrace) <$> read
 
-def getLeanc : BuildM FilePath :=
-  (·.leanc) <$> getLeanInstall
-
-def getLeanAr : BuildM FilePath :=
-  (·.ar) <$> getLeanInstall
-
-def getLakeInstall : BuildM LakeInstall :=
-  (·.lakeInstall) <$> read
+def failOnBuildCycle [ToString k] : Except (List k) α → BuildM α
+| Except.ok a => pure a
+| Except.error cycle => do
+  let cycle := cycle.map (s!"  {·}")
+  error s!"build cycle detected:\n{"\n".intercalate cycle}"

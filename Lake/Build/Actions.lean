@@ -27,31 +27,25 @@ def proc (args : IO.Process.SpawnArgs) : BuildM PUnit := do
     logError s!"external command {args.cmd} exited with status {out.exitCode}"
     failure
 
-def compileOlean (leanFile oleanFile : FilePath)
+def compileLeanModule (leanFile : FilePath)
+(oleanFile? ileanFile? cFile? : Option FilePath)
 (oleanPath : SearchPath := []) (rootDir : FilePath := ".")
 (leanArgs : Array String := #[]) (lean : FilePath := "lean")
 : BuildM PUnit := do
-  createParentDirs oleanFile
+  let mut args := leanArgs ++
+    #[leanFile.toString, "-R", rootDir.toString]
+  if let some oleanFile := oleanFile? then
+    createParentDirs oleanFile
+    args := args ++ #["-o", oleanFile.toString]
+  if let some ileanFile := ileanFile? then
+    createParentDirs ileanFile
+    args := args ++ #["-i", ileanFile.toString]
+  if let some cFile := cFile? then
+    createParentDirs cFile
+    args := args ++ #["-c", cFile.toString]
   proc {
+    args,
     cmd := lean.toString
-    args := leanArgs ++ #[
-      "-R", rootDir.toString, "-o", oleanFile.toString, leanFile.toString
-    ]
-    env := #[("LEAN_PATH", oleanPath.toString)]
-  }
-
-def compileOleanAndC (leanFile oleanFile cFile : FilePath)
-(oleanPath : SearchPath := []) (rootDir : FilePath := ".")
-(leanArgs : Array String := #[]) (lean : FilePath := "lean")
-: BuildM PUnit := do
-  createParentDirs cFile
-  createParentDirs oleanFile
-  proc {
-    cmd := lean.toString
-    args := leanArgs ++ #[
-      "-R", rootDir.toString, "-o", oleanFile.toString, "-c",
-      cFile.toString, leanFile.toString
-    ]
     env := #[("LEAN_PATH", oleanPath.toString)]
   }
 

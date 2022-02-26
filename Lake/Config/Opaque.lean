@@ -5,12 +5,16 @@ Authors: Mac Malone
 -/
 namespace Lake
 
-constant OpaquePackagePointed : PointedType.{0}
+constant OpaquePackagePointed : NonemptyType.{0}
 
 /-- Opaque reference to a `Package` used for forward declaration. -/
 def OpaquePackage : Type := OpaquePackagePointed.type
 
-constant OpaqueWorkspacePointed : PointedType.{0}
+instance : Nonempty OpaquePackage := OpaquePackagePointed.property
+
+constant OpaqueWorkspacePointed : NonemptyType.{0}
 
 /-- Opaque reference to a `Workspace` used for forward declaration. -/
 def OpaqueWorkspace : Type := OpaqueWorkspacePointed.type
+
+instance : Nonempty OpaqueWorkspace := OpaqueWorkspacePointed.property

@@ -3,10 +3,8 @@ Copyright (c) 2017 Microsoft Corporation. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Gabriel Ebner, Sebastian Ullrich, Mac Malone
 -/
-import Lake.LeanVersion
 
 open System
-
 namespace Lake.Git
 
 def upstreamBranch :=
@@ -48,7 +46,7 @@ def checkoutDetach (hash : String) (repo : Option FilePath := none)  :=
 
 def parseRevision (rev : String) (repo : Option FilePath := none) : IO String := do
   let rev ← captureGit #["rev-parse", "-q", "--verify", rev] repo
-  rev.trim -- remove newline at end
+  pure rev.trim -- remove newline at end
 
 def headRevision (repo : Option FilePath := none) : IO String :=
   parseRevision "HEAD" repo
@@ -64,5 +62,5 @@ def latestOriginRevision (branch : Option String) (repo : Option FilePath := non
 def revisionExists (rev : String) (repo : Option FilePath := none) : IO Bool := do
   try
     discard <| parseRevision (rev ++ "^{commit}") repo
-    true
-  catch _ => false
+    pure true
+  catch _ => pure false
