@@ -36,6 +36,7 @@
       };
     in
     {
+      inherit project;
       packages = project // {
         ${packageName} = project;
         cli = cli.executable;
